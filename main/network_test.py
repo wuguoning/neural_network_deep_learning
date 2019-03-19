@@ -1,12 +1,14 @@
 import sys
 import os
 
+# Import the mnist_loader function.
 module_path = os.path.abspath(os.path.join('../src/mnist_loader'))
 if module_path not in sys.path:
     sys.path.append(module_path)
 
 import mnist_loader
 
+# Import the network function
 module_path = os.path.abspath(os.path.join('../src/network'))
 if module_path not in sys.path:
     sys.path.append(module_path)

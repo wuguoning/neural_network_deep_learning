@@ -3,5 +3,8 @@
 > Author: wuguoning
 > 1-30-2019
 
-## Back Propogation is the first program
- 
+## Neural network
+ Reviesed from Michael Nielsin.
+ http://neuralnetworksanddeeplearning.com/chap3.html
+
+
