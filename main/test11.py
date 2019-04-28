@@ -37,48 +37,57 @@ class Network(object):
         self.num_layers = len(sizes)
         self.sizes = sizes
 
-    def dropout_size(self, prob=0.5):
+    def weights_biases_initializer(self):
+        self.weights = [np.random.randn(y,x) for x, y in zip(self.sizes[:-1], self.sizes[1:])]
+        self.biases = [np.random.randn(y,1) for y in self.sizes[1:]]
+
+    def dropout_mask(self, prob=0.5):
         """Using binomial distribution to generate a thinner network,
         which is inherit the weights and bias from the mother full
         network. The "prob" is the probability of the binomial
         distribution.
 
         """
+        thin_sizes = [np.ones(self.sizes[0])]
+        # To record the selected neurons.
+        thin_sizes_num = [self.sizes[0]]
+        # To record the numbers of the selected neurons.
 
-        # define a get indexes function using lambda function.
-        #get_indexes = lambda x, xs: [i for (y, i) in zip(xs, range(len(xs))) if x == y]
+        for k in self.sizes[1:-1]:
+            binom_dis = np.random.binomial(n=1, p=prob, size=k)
+            print(binom_dis)
+            thin_sizes_num.append(np.sum(binom_dis))
+            thin_sizes.append(binom_dis)
+        thin_sizes.append(np.ones(self.sizes[-1]))
+        thin_sizes_num.append(self.sizes[-1])
 
-        tt = []
-        thin_sizes = [np.ones(sizes[0])]
-        tt.append(sizes[0])
-        for i, k in enumerate(self.sizes[1:-1]):
-            bino_dist = np.random.binomial(n=1, p=prob, size=k)
-            print(bino_dist)
-            tt.append(np.sum(bino_dist))
-            #tt = get_indexes(1, bino_dist)
-            #thin_sizes[i+1] = len(tt)
-            thin_sizes.append(bino_dist)
-        thin_sizes.append(np.ones(sizes[-1]))
-        tt.append(sizes[-1])
-        mask = [np.outer(y,x)==1 for x, y in zip(thin_sizes[:-1], thin_sizes[1:])]
+        self.weights_mask = [np.outer(y,x)==1 for x, y in zip(thin_sizes[:-1], thin_sizes[1:])]
+        self.biases_mask = [thin_sizes[i]==1 for i in range(1,self.num_layers)]
 
-        return mask, tt
+        return thin_sizes_num
 
+    def thin_weights_biases(self):
+        """
+        Generate the thin weights and biases using dropout method
+        """
+        thin_sizes_num = self.dropout_mask(prob=0.5)
+        thin_weights = [self.weights[i][self.weights_mask[i]].reshape(thin_sizes_num[i+1],\
+                        thin_sizes_num[i]) for i in range(self.num_layers-1)]
+        thin_biases = [self.biases[i][self.biases_mask[i]] for i in range(self.num_layers-1)]
+
+        return thin_weights, thin_biases
 
 if  __name__ == '__main__':
     sizes = [2,4,5,2]
     net = Network(sizes)
-    weights = [np.random.randn(y,x) for x, y in zip(sizes[:-1], sizes[1:])]
-    mask, tt= net.dropout_size(prob=0.5)
-    print(tt)
-    print(weights)
-    print(mask)
-
-    for i in range(len(sizes)-1):
-        print(weights[i][mask[i]].reshape(tt[i+1],tt[i]))
-        B = np.zeros(np.shape(weights[i]))
-        B[mask[i]] = weights[i][mask[i]]
-        print(B)
+    net.weights_biases_initializer()
+    thin_weights, thin_biases = net.thin_weights_biases()
+    print(net.weights)
+    print("\n")
+    print(thin_weights)
+    print("\n")
+    print(thin_biases)
+    print("\n")
 
 
 

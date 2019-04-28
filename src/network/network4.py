@@ -36,7 +36,8 @@ class QuadraticCost(object):
     @staticmethod
     def delta(z, a, y):
         """Return the error delta from the output layer."""
-        return (a-y) * sigmoid_prime(z)
+        #return (a-y) * sigmoid_prime(z)
+        return (a-y) * ReLU_prime(z)
 
 
 class CrossEntropyCost(object):
@@ -121,32 +122,50 @@ class Network(object):
                         for x, y in zip(self.sizes[:-1], self.sizes[1:])]
 
 
-    def dropout_size(self, prob=0.5):
-        """Using binomial distribution to generate a thinner network,
-        which is inherit the weights and bias from the mother full
-        network. The "prob" is the probability of the binomial
-        distribution.
+    def dropout_mask(self, prob=0.5):
+        """Using binomial distribution to generate a thinner network's
+        mask matrix, which elements are booleans (True or False).
+        thin_weights are the weights of the child network, thin_biases are the
+        biases of the child network.
+        weights_mask: the child weights mask. biases_mask: the child biases mask
+        matrix.
 
         """
+        thin_sizes = [np.ones(self.sizes[0])]
+        # To record the selected neurons.
+        thin_sizes_num = [self.sizes[0]]
+        # To record the numbers of the selected neurons.
 
-        # define a get indexes function using lambda function.
-        get_indexes = lambda x, xs: [i for (y, i) in zip(xs, range(len(xs))) if x == y]
+        for k in self.sizes[1:-1]:
+            # binomial distribution to generate a 0/1 vector.
+            binom_dis = np.random.binomial(n=1, p=prob, size=k)
+            thin_sizes_num.append(sum(binom_dis))
+            thin_sizes.append(binom_dis)
+        thin_sizes.append(np.ones(self.sizes[-1]))
+        thin_sizes_num.append(self.sizes[-1])
 
-        thin_sizes = self.sizes
-        thin_sizes_indexes = []
-        for i, k in enumerate(self.sizes[1:-1]):
-            bino_dist = np.random.binomial(n=1, p=prob, size=k)
-            tt = get_indexes(1, bino_dist)
-            thin_sizes[i+1] = len(tt)
-            thin_sizes_indexes.append(tt)
+        weights_mask = [np.outer(y,x)==1 for x, y in zip(thin_sizes[:-1], thin_sizes[1:])]
+        biases_mask = [thin_sizes[i]==1 for i in range(1,self.num_layers)]
 
-        return thin_sizes, thin_sizes_indexes
+        thin_weights = [self.weights[i][weights_mask[i]].reshape(thin_sizes_num[i+1],\
+                        thin_sizes_num[i]) for i in range(self.num_layers-1)]
+        thin_biases = [self.biases[i][biases_mask[i]] for i in range(self.num_layers-1)]
+
+        return weights_mask, biases_mask, thin_sizes_num, thin_weights, thin_biases
 
 
-    def feedforward(self, a):
+    def feedforward(self, a, weights, biases):
+        """Return the output of the network if ``a`` is input."""
+        for b, w in zip(biases, weights):
+            #a = sigmoid(np.dot(w, a)+b)
+            a = ReLU(np.dot(w, a)+b)
+        return a
+
+    def feedforward_full_network(self, a):
         """Return the output of the network if ``a`` is input."""
         for b, w in zip(self.biases, self.weights):
-            a = sigmoid(np.dot(w, a)+b)
+            #a = sigmoid(np.dot(w, a)+b)
+            a = ReLU(np.dot(w, a)+b)
         return a
 
     def SGD(self, training_data, epochs, mini_batch_size, eta,
@@ -175,6 +194,7 @@ class Network(object):
         are empty if the corresponding flag is not set.
 
         """
+
         if evaluation_data: n_data = len(evaluation_data)
         n = len(training_data)
         evaluation_cost, evaluation_accuracy = [], []
@@ -185,68 +205,79 @@ class Network(object):
                 training_data[k:k+mini_batch_size]
                 for k in xrange(0, n, mini_batch_size)]
             for mini_batch in mini_batches:
-                self.update_mini_batch(
-                    mini_batch, eta, lmbda, len(training_data))
-            print "Epoch %s training complete" % j
+                weights_mask, biases_mask, thin_sizes_num, thin_weights, thin_biases = self.dropout_mask(prob=0.5)
+                thin_weights, thin_biases = self.update_mini_batch(
+                    mini_batch, eta, lmbda, len(training_data), thin_weights, thin_biases)
+                # Update the self.weights and self.biases
+                for i in range(self.num_layers-1):
+                    self.weights[i][weights_mask[i]] = thin_weights[i].flatten()
+                    self.biases[i][biases_mask[i]] = thin_biases[i]
+            print("Epoch %s training complete" % j)
             if monitor_training_cost:
                 cost = self.total_cost(training_data, lmbda)
                 training_cost.append(cost)
-                print "Cost on training data: {}".format(cost)
+                print("Cost on training data: {}".format(cost))
             if monitor_training_accuracy:
                 accuracy = self.accuracy(training_data, convert=True)
                 training_accuracy.append(accuracy)
-                print "Accuracy on training data: {} / {}".format(
-                    accuracy, n)
+                print("Accuracy on training data: {} / {}".format(
+                    accuracy, n))
             if monitor_evaluation_cost:
                 cost = self.total_cost(evaluation_data, lmbda, convert=True)
                 evaluation_cost.append(cost)
-                print "Cost on evaluation data: {}".format(cost)
+                print("Cost on evaluation data: {}".format(cost))
             if monitor_evaluation_accuracy:
                 accuracy = self.accuracy(evaluation_data)
                 evaluation_accuracy.append(accuracy)
-                print "Accuracy on evaluation data: {} / {}".format(
-                    self.accuracy(evaluation_data), n_data)
-            print
+                print("Accuracy on evaluation data: {} / {}".format(
+                    self.accuracy(evaluation_data), n_data))
+            print("========================================")
         return evaluation_cost, evaluation_accuracy, \
             training_cost, training_accuracy
 
-    def update_mini_batch(self, mini_batch, eta, lmbda, n):
+    def update_mini_batch(self, mini_batch, eta, lmbda, n, thin_weights, thin_biases):
         """Update the network's weights and biases by applying gradient
         descent using backpropagation to a single mini batch.  The
         ``mini_batch`` is a list of tuples ``(x, y)``, ``eta`` is the
         learning rate, ``lmbda`` is the regularization parameter, and
         ``n`` is the total size of the training data set.
+        thin_weights and thin_biases are the selected network generated by
+        dropout method.
 
         """
-        thin_sizes, thin_sizes_indexes = dropout_size(prob = 0.5)
+        # Generate the child network.
+        nabla_b = [np.zeros(b.shape) for b in thin_biases]
+        nabla_w = [np.zeros(w.shape) for w in thin_weights]
 
-
-        nabla_b = [np.zeros(b.shape) for b in self.biases]
-        nabla_w = [np.zeros(w.shape) for w in self.weights]
         for x, y in mini_batch:
-            delta_nabla_b, delta_nabla_w = self.backprop(x, y)
+            delta_nabla_b, delta_nabla_w = self.backprop(x, y, thin_weights, thin_biases)
             nabla_b = [nb+dnb for nb, dnb in zip(nabla_b, delta_nabla_b)]
             nabla_w = [nw+dnw for nw, dnw in zip(nabla_w, delta_nabla_w)]
-        self.weights = [w - eta*(lmbda/n)*np.sign(w) - eta/len(mini_batch)*nw
-                        for w, nw in zip(self.weights, nabla_w)]
-        self.biases = [b-(eta/len(mini_batch))*nb
-                       for b, nb in zip(self.biases, nabla_b)]
 
-    def backprop(self, x, y):
+        thin_weights = [w - (eta/len(mini_batch))*nw
+                        for w, nw in zip(thin_weights, nabla_w)]
+        thin_biases = [b-(eta/len(mini_batch))*nb
+                       for b, nb in zip(thin_biases, nabla_b)]
+
+        return thin_weights, thin_biases
+
+
+    def backprop(self, x, y, thin_weights, thin_biases):
         """Return a tuple ``(nabla_b, nabla_w)`` representing the
         gradient for the cost function C_x.  ``nabla_b`` and
         ``nabla_w`` are layer-by-layer lists of numpy arrays, similar
-        to ``self.biases`` and ``self.weights``."""
-        nabla_b = [np.zeros(b.shape) for b in self.biases]
-        nabla_w = [np.zeros(w.shape) for w in self.weights]
+        to ``thin_biases`` and ``thin_weights``."""
+        nabla_b = [np.zeros(b.shape) for b in thin_biases]
+        nabla_w = [np.zeros(w.shape) for w in thin_weights]
         # feedforward
         activation = x
         activations = [x] # list to store all the activations, layer by layer
         zs = [] # list to store all the z vectors, layer by layer
-        for b, w in zip(self.biases, self.weights):
+        for b, w in zip(thin_biases, thin_weights):
             z = np.dot(w, activation)+b
             zs.append(z)
-            activation = sigmoid(z)
+            #activation = sigmoid(z)
+            activation = ReLU(z)
             activations.append(activation)
         # backward pass
         delta = (self.cost).delta(zs[-1], activations[-1], y)
@@ -260,8 +291,9 @@ class Network(object):
         # that Python can use negative indices in lists.
         for l in xrange(2, self.num_layers):
             z = zs[-l]
-            sp = sigmoid_prime(z)
-            delta = np.dot(self.weights[-l+1].transpose(), delta) * sp
+            #sp = sigmoid_prime(z)
+            sp = ReLU_prime(z)
+            delta = np.dot(thin_weights[-l+1].transpose(), delta) * sp
             nabla_b[-l] = delta
             nabla_w[-l] = np.dot(delta, activations[-l-1].transpose())
         return (nabla_b, nabla_w)
@@ -290,10 +322,10 @@ class Network(object):
 
         """
         if convert: # y is a vector
-            results = [(np.argmax(self.feedforward(x)), np.argmax(y))
+            results = [(np.argmax(self.feedforward_full_network(x)), np.argmax(y))
                        for (x, y) in data]
         else:
-            results = [(np.argmax(self.feedforward(x)), y)
+            results = [(np.argmax(self.feedforward_full_network(x)), y)
                         for (x, y) in data]
         return sum(int(x == y) for (x, y) in results)
 
@@ -306,7 +338,7 @@ class Network(object):
         """
         cost = 0.0
         for x, y in data:
-            a = self.feedforward(x)
+            a = self.feedforward_full_network(x)
             if convert: y = vectorized_result(y)
             cost += self.cost.fn(a, y)/len(data)
         cost += 0.5*(lmbda/len(data))*sum(
@@ -356,3 +388,18 @@ def sigmoid(z):
 def sigmoid_prime(z):
     """Derivative of the sigmoid function."""
     return sigmoid(z)*(1-sigmoid(z))
+
+def ReLU(z):
+    """
+    Rectified linear unit function for Neural Network.
+
+    """
+    return np.nan_to_num(z * (z > 0))
+
+def ReLU_prime(z):
+    """
+    Derivative of the Rectified linear unit function.
+
+    """
+
+    return 1.0 * np.nan_to_num((z > 0))
